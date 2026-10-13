@@ -189,6 +189,12 @@ footer{font-size:.82rem;color:var(--muted);max-width:75ch}
 .spot-item .flipcard{--cw:clamp(120px,36vw,190px)}
 .spot-item .lab{font-weight:700}
 .spot-hint{color:var(--muted);text-align:center;max-width:36ch}
+.turnpop{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 14px);transform:translateX(-50%);z-index:200;background:var(--accent);color:var(--accent-ink);font-family:var(--f-display);font-size:clamp(1.3rem,5vw,1.8rem);padding:10px 26px;border-radius:999px;box-shadow:0 10px 30px rgba(0,0,0,.35);pointer-events:none;white-space:nowrap;animation:popin 2.2s ease both}
+@keyframes popin{0%{transform:translateX(-50%) scale(.6);opacity:0}12%{transform:translateX(-50%) scale(1.12);opacity:1}22%{transform:translateX(-50%) scale(1)}80%{opacity:1}100%{transform:translateX(-50%) translateY(-20px);opacity:0}}
+.me.turn{animation:glow 1.8s ease-in-out infinite}
+@keyframes glow{50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 35%,transparent)}}
+.bar.mine{background:color-mix(in srgb,var(--accent) 12%,var(--surface))}
+@media (prefers-reduced-motion:reduce){.me.turn{animation:none}.turnpop{animation:none}}
 @media (prefers-reduced-motion:reduce){.card,.card.flash,.card.turnup,.card.can::after,.spot-box{transition:none;animation:none}.flipcard.anim .inner{animation:none}}
 </style>
 </head><body>
@@ -896,7 +902,42 @@ const NetP=(function(){
   let MODE='home';          /* home | local | host | client */
   let V=null;               /* aktuelle Sicht dieses Spielers */
   let HOST=null;            /* Spielleiter (lokal oder als Gastgeber) */
-  const UI={sel:new Set(),reveal:new Set(),swapOwn:null,swapOther:null,spot:null,want:null,freshDrawn:null,endFresh:false,endShown:'',aid:true};
+  const SND={ctx:null,on:LS.get('km-sound')!=='0'};
+  const BASE_TITLE=document.title;
+  function primeAudio(){
+    try{
+      const C=window.AudioContext||window.webkitAudioContext;
+      if(!C)return;
+      if(!SND.ctx)SND.ctx=new C();
+      if(SND.ctx.state==='suspended')SND.ctx.resume();
+    }catch(e){}
+  }
+  function chime(){
+    if(!SND.on)return;
+    try{
+      primeAudio();const c=SND.ctx;if(!c)return;
+      [[659.25,0],[880,0.14]].forEach(function(n){
+        const o=c.createOscillator(),g=c.createGain(),t=c.currentTime+n[1];
+        o.type='sine';o.frequency.value=n[0];
+        g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.18,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+0.4);
+        o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+0.45);
+      });
+    }catch(e){}
+  }
+  function notifyTurn(){
+    const mine=!!V&&V.kind==='game'&&active()&&V.cur===V.me;
+    document.title=mine?'● Du bist dran · '+BASE_TITLE:BASE_TITLE;
+    if(!mine){UI.mineFlag=false;return;}
+    if(UI.mineFlag||V.phase!=='turn')return;
+    UI.mineFlag=true;
+    const el=document.createElement('div');
+    el.className='turnpop';el.setAttribute('aria-hidden','true');el.textContent='Du bist dran!';
+    document.body.appendChild(el);
+    setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},2300);
+    chime();
+    try{if(navigator.vibrate)navigator.vibrate([80,60,80]);}catch(e){}
+  }
+  const UI={mineFlag:false,sel:new Set(),reveal:new Set(),swapOwn:null,swapOther:null,spot:null,want:null,freshDrawn:null,endFresh:false,endShown:'',aid:true};
   const NET={lobby:null,rm:null,code:'',tok:'',name:'',hasView:false,unsubs:[],timer:null,tries:0};
   const SAVE={db:null,uid:null,t:null,busy:false,dirty:false};
 
@@ -1081,6 +1122,7 @@ const NetP=(function(){
     if(MODE==='local')b='<button type="button" class="btn alt sm" data-act="quit">Spiel beenden</button>';
     else if(MODE==='host')b='<button type="button" class="btn alt sm" data-act="toLobby">Zurück zur Lobby</button><button type="button" class="btn alt sm" data-act="closeRoom">Partie schließen</button>';
     else if(MODE==='client')b='<button type="button" class="btn alt sm" data-act="leave">Partie verlassen</button>';
+    b='<button type="button" class="btn alt sm" data-act="toggleSound" aria-pressed="'+SND.on+'">'+(SND.on?'Ton: an':'Ton: aus')+'</button>'+b;
     $('#foot').innerHTML=b;
   }
   function renderSummary(){
@@ -1129,6 +1171,7 @@ const NetP=(function(){
     const key=V.round+'-'+V.phase;
     if(isEnd()&&UI.endShown!==key){UI.endShown=key;UI.endFresh=true;}
     renderScores();renderOpps();renderTable();renderBar();renderMe();renderLog();renderSummary();renderFoot();renderSpot();
+    notifyTurn();
     UI.freshDrawn=null;UI.endFresh=false;
   }
 
@@ -1176,7 +1219,7 @@ const NetP=(function(){
     NET.unsubs.forEach(function(u){try{u();}catch(e){}});NET.unsubs=[];
     if(NET.rm){try{NET.rm.leave();}catch(e){}NET.rm=null;}
     if(HOST){HOST.destroy();HOST=null;}
-    V=null;MODE='home';UI.spot=null;UI.want=null;UI.reveal.clear();UI.sel.clear();
+    V=null;MODE='home';document.title=BASE_TITLE;UI.spot=null;UI.want=null;UI.reveal.clear();UI.sel.clear();
     $('#spot').hidden=true;
     show('home');renderResume();setErr(msg||'');
     try{window.scrollTo(0,0);}catch(e){}
@@ -1184,6 +1227,7 @@ const NetP=(function(){
 
   function act(a,el){
     switch(a){
+      case 'toggleSound':SND.on=!SND.on;LS.set('km-sound',SND.on?'1':'0');if(SND.on)chime();render();return;
       case 'create':createOnline();return;
       case 'resume':resumeSession();return;
       case 'dropSess':LS.del('km-sess');renderResume();return;
@@ -1400,6 +1444,7 @@ const NetP=(function(){
 
   /* ---------- Start ---------- */
   document.addEventListener('click',function(e){
+    primeAudio();
     const cardEl=e.target.closest('.card[data-p]');
     if(cardEl&&V){onCard(+cardEl.dataset.p,+cardEl.dataset.i);return;}
     const b=e.target.closest('[data-act]');
